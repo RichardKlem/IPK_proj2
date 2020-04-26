@@ -28,9 +28,9 @@ enum EXIT_CODES {OK = 0,
                  UNKNOWN_PARAMETER = 12};
 
 void ProcessPacket(unsigned char* , int);
-void print_ip_header(unsigned char* Buffer, int Size, uint16_t source_port, uint16_t dest_port);
-void print_tcp_packet(unsigned char * , int );
-void print_udp_packet(unsigned char * , int );
+void print_ip_header(unsigned char* Buffer, const struct pcap_pkthdr *header, uint16_t source_port, uint16_t dest_port);
+void print_tcp_packet(unsigned char * , const struct pcap_pkthdr *header, int);
+void print_udp_packet(unsigned char * , const struct pcap_pkthdr *header, int);
 void print_icmp_packet(unsigned char* , int );
 void PrintData (unsigned char* , int);
 

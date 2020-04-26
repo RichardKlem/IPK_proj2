@@ -20,7 +20,12 @@ const char * help_text = "***Napoveda k snifferu paket***\n"
                    "   -n | --num int:pocet_paketu (Určuje počet vypsaných paketů,\n"
                    "       pokud nebude počet specifikován, vypíše se pouze 1 paket.)\n";
 
-enum EXIT_CODES {OK = 0, BAD_ARG_VALUE = 11, UNKNOWN_PARAMETER = 12};
+enum EXIT_CODES {OK = 0,
+                 INTERFACE_ERROR = 1,
+                 SOCKET_ERROR = 2,
+                 PACKET_ERROR = 3,
+                 BAD_ARG_VALUE = 11,
+                 UNKNOWN_PARAMETER = 12};
 
 void ProcessPacket(unsigned char* , int);
 void print_ip_header(unsigned char* Buffer, int Size, uint16_t source_port, uint16_t dest_port);

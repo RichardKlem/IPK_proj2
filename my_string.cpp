@@ -1,7 +1,7 @@
 //
 // Created by Richard Klem on 24.04.20.
 //
-#include <string>
+#include <cstring>
 #include <sstream>
 #include "my_string.h"
 
@@ -18,7 +18,10 @@ str2int_struct_t str2int (char * str){
         return result;
 
     std::stringstream ss(str);
-
+    for (int i = 0; i < strlen(str); ++i) {
+        if (!isdigit(str[i]))
+            return result;
+    }
     if((ss >> num).fail())
         return result;
     result = {S2I_OK, num};

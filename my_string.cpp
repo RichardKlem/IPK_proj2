@@ -18,7 +18,7 @@ str2int_struct_t str2int (char * str){
         return result;
 
     std::stringstream ss(str);
-    for (int i = 0; i < strlen(str); ++i) {
+    for (unsigned int i = 0; i < strlen(str); ++i) {
         if (!isdigit(str[i]))
             return result;
     }

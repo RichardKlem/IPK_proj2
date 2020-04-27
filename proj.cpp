@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
     char *dev;			/* The device to sniff on */
     char errbuf[PCAP_ERRBUF_SIZE];	/* Error string */
     struct bpf_program fp{};		/* The compiled filter */
-    char filter_exp[PCAP_ERRBUF_SIZE];	/* The filter expression */
+    char filter_exp[PCAP_ERRBUF_SIZE] = "";	/* The filter expression */
     bpf_u_int32 mask;		/* Our netmask */
     bpf_u_int32 net;		/* Our IP */
     struct pcap_pkthdr header{};	/* The header that pcap gives us */
@@ -212,8 +212,7 @@ int main(int argc, char* argv[]) {
     else if (udp_flag)
         sprintf(filter_exp, "udp ");
     if (port_flag)
-        sprintf(filter_exp, "port %d ", port_arg);
-
+        sprintf(filter_exp + strlen(filter_exp), "port %d ", port_arg);
     /* Compile and apply the filter */
     if (pcap_compile(handle, &fp, filter_exp, 0, net) == -1) {
         fprintf(stderr, "Couldn't parse filter %s: %s\n", filter_exp, pcap_geterr(handle));
@@ -227,81 +226,33 @@ int main(int argc, char* argv[]) {
     pcap_loop(handle, num_arg, callback, nullptr);
     pcap_close(handle);
     exit(OK);
-
-
-
-//start socket verze
-    int saddr_size, data_size;
-    struct sockaddr saddr{};
-
-    auto *buffer = (unsigned char *) malloc(BUFFER_SIZE);
-
-    printf("Starting...\n");
-
-    //vytvoreni noveho soketu, sock_raw obsahuje pri uspechu file descriptor
-    int sock_raw = socket(AF_PACKET , SOCK_RAW , htons(ETH_P_ALL)) ;
-
-    if(sock_raw == -1){
-        fprintf(stderr, "Nastala chyba při vytváření soketu.\n");
-        exit(SOCKET_ERROR);
-    }
-
-    while(total < num_arg){
-        saddr_size = sizeof saddr;
-        //obdrzeni prichoziho soketu
-        data_size = recvfrom(sock_raw, buffer, BUFFER_SIZE, 0, &saddr, (socklen_t*) &saddr_size);
-        if(data_size == -1){
-            fprintf(stderr, "Nastala chyba při čtení příchozího paketu.\n");
-            exit(PACKET_ERROR);
-        }
-
-        auto *iph = (struct iphdr*)(buffer + sizeof(struct ethhdr));
-        total++;
-        switch (iph->protocol){
-            case 6:  //TCP
-                tcp_count++;
-                //print_tcp_packet(buffer, header, data_size);                break;
-
-            case 17: //UDP
-                udp_count++;
-                //print_udp_packet(buffer, header, data_size);
-                break;
-
-            default:
-                others++;
-                break;
-        }
-    }
-    //konec socket verze
-}
-
-void print_ethernet_header(unsigned char* Buffer, int Size)
-{
-    struct ethhdr *eth = (struct ethhdr *)Buffer;
-
-    fprintf(logfile , "\n");
-    fprintf(logfile , "Ethernet Header\n");
-    fprintf(logfile , "   |-Destination Address : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n", eth->h_dest[0] , eth->h_dest[1] , eth->h_dest[2] , eth->h_dest[3] , eth->h_dest[4] , eth->h_dest[5] );
-    fprintf(logfile , "   |-Source Address      : %.2X-%.2X-%.2X-%.2X-%.2X-%.2X \n", eth->h_source[0] , eth->h_source[1] , eth->h_source[2] , eth->h_source[3] , eth->h_source[4] , eth->h_source[5] );
-    fprintf(logfile , "   |-Protocol            : %u \n",(unsigned short)eth->h_proto);
 }
 
 void print_ip_header(unsigned char* Buffer, const struct pcap_pkthdr *header, uint16_t source_port, uint16_t dest_port)
 {
-    auto *iph = (struct iphdr *)(Buffer  + sizeof(struct ethhdr) );
+    auto *eth = (struct ethhdr *)Buffer;
+    auto *iph = (struct iphdr *)(Buffer  + sizeof(*eth));
 
-    memset(&source, 0, sizeof(source));
-    source.sin_addr.s_addr = iph->saddr;
+    memset(&source, 0, sizeof(source)); //"vyčistí" socket
+
+    eth->h_proto = (Buffer[12] << (unsigned int) 8) + Buffer[13]; //nastavení ether type z ethernetového rámce
+    if (eth->h_proto == ETH_P_IP)
+        source.sin_family = AF_INET; //IPv4
+    else if (eth->h_proto == ETH_P_IPV6)
+        source.sin_family = AF_INET6; //IPv6
+
+    source.sin_addr.s_addr = iph->saddr; //nastaví ve struktuře IP adresu
 
     char * src_name_print;
     char src_name[NI_MAXHOST];
     int rc = getnameinfo((struct sockaddr*)&source, sizeof(source),
-                          src_name, NI_MAXHOST,
-                          nullptr, 0, NI_NAMEREQD);
+                          src_name, sizeof(src_name),
+                          nullptr, 0, 0);
     if (rc != 0)
         src_name_print = inet_ntoa(source.sin_addr);
     else
         src_name_print = src_name;
+
     memset(&dest, 0, sizeof(dest));
     dest.sin_addr.s_addr = iph->daddr;
 

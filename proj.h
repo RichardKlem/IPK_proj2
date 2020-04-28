@@ -28,10 +28,12 @@ enum EXIT_CODES {OK = 0,
                  UNKNOWN_PARAMETER = 12};
 
 void ProcessPacket(unsigned char* , int);
-void print_ip_header(unsigned char* Buffer, const struct pcap_pkthdr *header, uint16_t source_port, uint16_t dest_port);
-void print_tcp_packet(unsigned char * , const struct pcap_pkthdr *header, int);
-void print_udp_packet(unsigned char * , const struct pcap_pkthdr *header, int);
+void
+print_packet_preamble(unsigned char *buffer, const struct pcap_pkthdr *frame, uint16_t source_port, uint16_t dest_port,
+                      sa_family_t ip_version);
+void print_tcp_packet(unsigned char *buffer, const struct pcap_pkthdr *frame, int size, sa_family_t ip_version);
+void print_udp_packet(unsigned char *buffer, const struct pcap_pkthdr *frame, int size, sa_family_t ip_version);
 void print_icmp_packet(unsigned char* , int );
-void PrintData (unsigned char* , int);
+void print_data (unsigned char* data , int size);
 
 #endif //PROJ2_PROJ_H

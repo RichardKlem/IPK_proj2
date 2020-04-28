@@ -234,6 +234,7 @@ int main(int argc, char * argv[]) {
         exit(INTERFACE_ERROR);
     }
 
+    //todo opravit kombinaci tcp+udp+port...nefunguje
     if ((!tcp_flag && !udp_flag) || (tcp_flag && udp_flag))
         sprintf(filter_exp, "(tcp or udp) ");
     else if (tcp_flag)

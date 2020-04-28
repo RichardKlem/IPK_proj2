@@ -6,7 +6,7 @@ main: main.cpp
 	g++ -I$(PCAP) -o main main.cpp -lpcap
 
 proj: $(SOURCES)
-	g++ -I$(PCAP) -o proj proj.cpp my_string.cpp -lpcap
+	g++ -Wextra -Wall -pedantic -I$(PCAP) -o proj proj.cpp my_string.cpp -lpcap
 
 ifeq (run,$(firstword $(MAKECMDGOALS)))
   RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))

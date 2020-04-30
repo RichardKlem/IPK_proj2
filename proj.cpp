@@ -30,6 +30,7 @@
 #include <sstream>
 #include <csignal>
 #include <map>
+#include "functions.h"
 #include "my_string.h"
 #include "proj.h"
 
@@ -38,11 +39,9 @@ struct sockaddr_in sock_source_4, sock_dest_4;
 struct sockaddr_in6 sock_source_6, sock_dest_6;
 int tcp_count = 0, udp_count = 0, total = 0, others = 0;
 char * interface_arg;
-int interface_flag = 0, tcp_flag = 0, udp_flag = 0, port_flag = 0, port_arg = 0, num_arg = 1, bytes_read = 0;
+int interface_flag = 0, tcp_flag = 0, udp_flag = 0, arp_flag = 0, ip6_flag = 0, ip4_flag = 0, port_flag = 0, port_arg = 0, num_arg = 1, bytes_read = 0;
 FILE * logfile = stdout;
 FILE * error_logfile = stderr;
-std::map<sockaddr_in, char *> ip_dns_cache;
-std::map<sockaddr_in6, char *> ip6_dns_cache;
 
 //definice dlouhých přepínačů
 struct option long_options[] =
@@ -50,12 +49,15 @@ struct option long_options[] =
                 {"help", no_argument,        0, 'h'},
                 {"tcp", no_argument,        0, 't'},
                 {"udp",  no_argument,        0, 'u'},
+                {"arp",  no_argument,        0, 'a'},
+                {"ip6",  no_argument,        0, '6'},
+                {"ip4",  no_argument,        0, '4'},
                 {"num",  optional_argument,  0, 'n'},
                 {"port", optional_argument,  0, 'p'},
                 {0, 0, 0, 0}  // ukoncovaci prvek
         };
 //definice krátkých přepínačů
-char *short_options = (char*)"hn:p:tui:";
+char *short_options = (char*)"hn:p:tua64i:";
 
 
 
@@ -104,7 +106,7 @@ void callback(u_char * args, const struct pcap_pkthdr * header, const u_char * p
 
     //Zpracování podle typu paketu
     if (is_arp)
-        ;//print_arp_packet(...);
+        print_arp_packet((unsigned char *) packet, header, header->len);
     else if (protocol == IPPROTO_TCP){
         tcp_count++;
         print_tcp_packet((unsigned char *) packet, header, header->len, ip_version);
@@ -183,7 +185,19 @@ int main(int argc, char * argv[]) {
                         fprintf(error_logfile, "\n   Parametr -u | --udp nepřijímá žádné argumenty.\n");
                         exit(BAD_ARG_VALUE);
                     }
-                    udp_flag = 1;
+                case '6':
+                    if (p_tmp->status == S2I_OK){
+                        fprintf(error_logfile, "\n   Parametr -6 | --ip6 nepřijímá žádné argumenty.\n");
+                        exit(BAD_ARG_VALUE);
+                    }
+                    ip6_flag = 1;
+                    break;
+                case '4':
+                    if (p_tmp->status == S2I_OK){
+                        fprintf(error_logfile, "\n   Parametr -4 | --ip4 nepřijímá žádné argumenty.\n");
+                        exit(BAD_ARG_VALUE);
+                    }
+                    ip6_flag = 1;
                     break;
                 default:
                     exit(UNKNOWN_PARAMETER);
@@ -238,10 +252,17 @@ int main(int argc, char * argv[]) {
         exit(INTERFACE_ERROR);
     }
 
-    sprintf(filter_exp, "ether proto \\ip6 and ");
+    if (ip4_flag)
+        sprintf(filter_exp, "ether proto \\ip and ");
+    else if (ip6_flag)
+        sprintf(filter_exp, "ether proto \\ip6 and ");
+
+    if (arp_flag)
+        sprintf(filter_exp, "ether proto \\arp and ");
+
     if (port_flag){
         if ((!tcp_flag and !udp_flag) or (tcp_flag and udp_flag))
-            sprintf(filter_exp + strlen(filter_exp), "udp port %d or tcp port %d", port_arg, port_arg);
+            sprintf(filter_exp + strlen(filter_exp), "(udp port %d or tcp port %d)", port_arg, port_arg);
         else if (tcp_flag)
             sprintf(filter_exp + strlen(filter_exp), "tcp port %d", port_arg);
         else if (udp_flag)
@@ -249,7 +270,7 @@ int main(int argc, char * argv[]) {
     }
     else{
         if ((!tcp_flag and !udp_flag) or (tcp_flag and udp_flag))
-            sprintf(filter_exp + strlen(filter_exp), "udp or tcp");
+            sprintf(filter_exp + strlen(filter_exp), "(udp or tcp)");
         else if (tcp_flag)
             sprintf(filter_exp + strlen(filter_exp), "tcp");
         else if (udp_flag)
@@ -284,22 +305,19 @@ int main(int argc, char * argv[]) {
  * @param source_port zdrojový port
  * @param dest_port cílový port
  */
-void print_packet_preamble(unsigned char * packet,
-                           const struct pcap_pkthdr *frame,
-                           uint16_t source_port,
-                           uint16_t dest_port,
-                           sa_family_t ip_version){
+void print_packet_preamble(unsigned char *packet, const struct pcap_pkthdr *frame, sa_family_t ip_version,
+                           uint16_t dest_port = 0, uint16_t source_port = 0) {
     auto * eth = (struct ethhdr *)packet;
     unsigned short ethhdrlen = sizeof(struct ethhdr);
     auto * iph = (struct iphdr *)(packet + ethhdrlen);
     auto * ip6h = (struct ip6_hdr *)(packet + ethhdrlen);
-    auto * arph = (struct arphdr *)(packet + ethhdrlen);
 
+/*
     //"vyčistí" socket
     memset(&sock_source_4, 0, sizeof(sock_source_4));
     memset(&sock_dest_4, 0, sizeof(sock_dest_4));
     memset(&sock_source_6, 0, sizeof(sock_source_6));
-    memset(&sock_dest_6, 0, sizeof(sock_dest_6));
+    memset(&sock_dest_6, 0, sizeof(sock_dest_6));*/
     char * src_name_print;
     char * src_name_print_tmp[INET6_ADDRSTRLEN];
     char * dest_name_print;
@@ -308,57 +326,34 @@ void print_packet_preamble(unsigned char * packet,
     char dest_name[NI_MAXHOST];
 
     if (ip_version == AF_INET){ //IPv4
-        sock_source_4.sin_family = AF_INET;
-        sock_source_4.sin_addr.s_addr = iph->saddr; //nastaví ve struktuře IP adresu
-        sock_dest_4.sin_family = AF_INET;
-        sock_dest_4.sin_addr.s_addr = iph->daddr;
+        ip_generic_addr addr{};
+        addr.address.addr = iph->saddr;
 
-        //zdrojová adresa
-        int rc_s = getnameinfo((struct sockaddr *)&sock_source_4, sizeof(sock_source_4),
-                             src_name, sizeof(src_name),nullptr, 0, 0);
-        if (rc_s != 0)
-            src_name_print = inet_ntoa(sock_source_4.sin_addr);
-        else
-            src_name_print = src_name;
+        getnameinfo(addr, ip_version, src_name);
+        src_name_print = src_name;
 
-        //cílová adresa
-        int rc_d = getnameinfo((struct sockaddr *)&sock_dest_4, sizeof(sock_dest_4),
-                               dest_name, sizeof(dest_name),nullptr, 0, 0);
-        if (rc_d != 0)
-            dest_name_print = inet_ntoa(sock_dest_4.sin_addr);
-        else
-            dest_name_print = dest_name;
+        addr = {};
+        addr.address.addr = iph->daddr;
+
+        getnameinfo(addr, ip_version, dest_name);
+        dest_name_print = dest_name;
+
     }
     else if (ip_version == AF_INET6){
-        sock_source_6.sin6_family = AF_INET6; //IPv6
-        sock_source_6.sin6_addr = ip6h->ip6_src;
-        sock_dest_6.sin6_family = AF_INET6;
-        sock_dest_6.sin6_addr = ip6h->ip6_dst;
+        ip_generic_addr addr{};
+        addr.address.addr6 = ip6h->ip6_src;
 
-        //zdrojová adresa
-        int rc_s = getnameinfo((struct sockaddr *)&sock_source_6, sizeof(sock_source_6),
-                             src_name, sizeof(src_name),nullptr, 0, 0);
-        if (rc_s != 0){
-            inet_ntop(AF_INET6, &(sock_source_6.sin6_addr), (char *)(src_name_print_tmp),INET6_ADDRSTRLEN);
-            src_name_print = (char *)src_name_print_tmp;
-        }
-        else
-            src_name_print = src_name;
+        getnameinfo(addr, ip_version, src_name);
+        src_name_print = src_name;
 
-        //cílová adresa
-        int rc_d = getnameinfo((struct sockaddr *)&sock_dest_6, sizeof(sock_dest_6),
-                               dest_name, sizeof(dest_name),nullptr, 0, 0);
-        if (rc_d != 0){
-            inet_ntop(AF_INET6, &(sock_dest_6.sin6_addr), (char *)(dest_name_print_tmp),INET6_ADDRSTRLEN);
-            dest_name_print = (char *)(dest_name_print_tmp);
-        }
-        else
-            dest_name_print = dest_name;
+        addr = {};
+        addr.address.addr6 = ip6h->ip6_dst;
+
+        getnameinfo(addr, ip_version, dest_name);
+        dest_name_print = dest_name;
     }
-    else{ //ARP
-        ;//eth->h_dest
-        //ARP je na OSI vrstve 2, pouziva fyzicke mac adresy pro komunikaci, ale zaroven se v data payload pta pomoci IP
-        // takze je i na OSI vrstve 3, toto musim vymyslet.
+    else{
+
     }
 
     //získání a zpracování "časové stopy" paketu
@@ -368,7 +363,7 @@ void print_packet_preamble(unsigned char * packet,
     int seconds = time->tm_sec;
     long int microseconds = frame->ts.tv_usec;
 
-    fprintf(logfile, "\n%d:%d:%d.%ld ", hours, minutes, seconds, microseconds);
+    fprintf(logfile, "\n%02d:%02d:%02d.%06ld ", hours, minutes, seconds, microseconds);
     fprintf(logfile , "%s : %d > ", src_name_print, source_port);
     fprintf(logfile , "%s : %d\n", dest_name_print, dest_port);
 }
@@ -407,7 +402,7 @@ void print_tcp_packet(unsigned char * packet, const struct pcap_pkthdr * frame, 
 
     int header_size = ethhdrlen + iphXhdrlen + tcphdrlen;
 
-    print_packet_preamble(packet, frame, ntohs(tcph->source), ntohs(tcph->dest), ip_version);
+    print_packet_preamble(packet, frame, ip_version, ntohs(tcph->dest), ntohs(tcph->source));
 
     fprintf(logfile , "\n");
     print_data(packet, header_size);
@@ -447,22 +442,39 @@ void print_udp_packet(unsigned char * packet, const struct pcap_pkthdr * frame, 
 
     int header_size = ethhdrlen + iphXhdrlen + udphdrlen;
 
-    print_packet_preamble(packet, frame, ntohs(udph->source), ntohs(udph->dest), ip_version);
+    print_packet_preamble(packet, frame, ip_version, ntohs(udph->dest), ntohs(udph->source));
     fprintf(logfile , "\n");
     print_data(packet, header_size);
     fprintf(logfile , "\n");
     print_data(packet + header_size, size - header_size);
     fprintf(logfile , "\n");
 }
+/**
+ * @brief Funkce tiskne ethernetovou a ARP hlavičku, pak jeden prázdný řádek a následně samotná data.
+ * @param packet ukazatel na pole obsahující data příchozího paketu
+ * @param frame ukazatel na strukturu představující zaobalující rámec celého paketu,
+ *              odsud funkce získává čas přijetí paketu
+ * @param size celková velikost paketu
+ */
+void print_arp_packet(unsigned char *packet, struct pcap_pkthdr *frame, int size) {
+    unsigned short ethhdrlen = sizeof(struct ethhdr);
+    unsigned short arphdrlen;
+    auto * arph = (struct arphdr *)(packet + ethhdrlen);
+
+
+    int header_size = ethhdrlen + arphdrlen;
+
+    print_packet_preamble(packet, frame, , ntohs(udph->dest), ntohs(udph->source));
+    fprintf(logfile , "\n");
+    print_data(packet, header_size);
+    fprintf(logfile , "\n");
+    print_data(packet + header_size, size - header_size);
+    fprintf(logfile , "\n");
+}
+
+
 void print_bytes(int size){
-    if (size >= 0x0 and size <= 0xf)
-        fprintf(logfile , "0x000%x:", size);
-    else if (size >= 0x10 and size <= 0xff)
-        fprintf(logfile , "0x00%x:", size);
-    else if (size >= 0x100 and size <= 0xfff)
-        fprintf(logfile , "0x0%x:", size);
-    else
-        fprintf(logfile , "0x%x:", size);
+    fprintf(logfile, "0x%04x", size);
 }
 
 

@@ -29,6 +29,7 @@
 #include <iostream>
 #include <sstream>
 #include <csignal>
+#include <map>
 #include "my_string.h"
 #include "proj.h"
 
@@ -40,6 +41,8 @@ char * interface_arg;
 int interface_flag = 0, tcp_flag = 0, udp_flag = 0, port_flag = 0, port_arg = 0, num_arg = 1, bytes_read = 0;
 FILE * logfile = stdout;
 FILE * error_logfile = stderr;
+std::map<sockaddr_in, char *> ip_dns_cache;
+std::map<sockaddr_in6, char *> ip6_dns_cache;
 
 //definice dlouhých přepínačů
 struct option long_options[] =
@@ -53,6 +56,8 @@ struct option long_options[] =
         };
 //definice krátkých přepínačů
 char *short_options = (char*)"hn:p:tui:";
+
+
 
 /**
  * @brief Funkce slouží jako koncová procedura při zachycení signálu SIGINT
@@ -79,7 +84,6 @@ void callback(u_char * args, const struct pcap_pkthdr * header, const u_char * p
     int protocol;
     auto * eth = (struct ethhdr *)packet;
 
-    //todo tady se musí řešit IPv4 vs. IPv6 logika. Dál musí jít už přímé zpracování.
     eth->h_proto = (packet[12] << (unsigned int) 8) + packet[13]; //nastavení ether type z ethernetového rámce
 
     //Zjištění typu IP, případně ARP a typ protokolu
@@ -185,7 +189,7 @@ int main(int argc, char * argv[]) {
                     exit(UNKNOWN_PARAMETER);
             }
         }
-        if (!tcp_flag && !udp_flag){
+        if (!tcp_flag and !udp_flag){
             tcp_flag = 1;
             udp_flag = 1;
         }
@@ -234,17 +238,25 @@ int main(int argc, char * argv[]) {
         exit(INTERFACE_ERROR);
     }
 
-    //todo opravit kombinaci tcp+udp+port...nefunguje
-    if ((!tcp_flag && !udp_flag) || (tcp_flag && udp_flag))
-        sprintf(filter_exp, "(tcp or udp) ");
-    else if (tcp_flag)
-        sprintf(filter_exp, "tcp ");
-    else if (udp_flag)
-        sprintf(filter_exp, "udp ");
+    sprintf(filter_exp, "ether proto \\ip6 and ");
+    if (port_flag){
+        if ((!tcp_flag and !udp_flag) or (tcp_flag and udp_flag))
+            sprintf(filter_exp + strlen(filter_exp), "udp port %d or tcp port %d", port_arg, port_arg);
+        else if (tcp_flag)
+            sprintf(filter_exp + strlen(filter_exp), "tcp port %d", port_arg);
+        else if (udp_flag)
+            sprintf(filter_exp + strlen(filter_exp), "udp port %d", port_arg);
+    }
+    else{
+        if ((!tcp_flag and !udp_flag) or (tcp_flag and udp_flag))
+            sprintf(filter_exp + strlen(filter_exp), "udp or tcp");
+        else if (tcp_flag)
+            sprintf(filter_exp + strlen(filter_exp), "tcp");
+        else if (udp_flag)
+            sprintf(filter_exp + strlen(filter_exp), "udp");
+    }
 
-    if (port_flag)
-        sprintf(filter_exp + strlen(filter_exp), "port %d ", port_arg);
-
+    printf("%s", filter_exp);
     if (pcap_compile(handle, &fp, filter_exp, 0, net) == -1) {
         fprintf(error_logfile, "\n   Nepodařilo se přeložit filtr - \"%s\" na rozhraní - \"%s\".\n", filter_exp, dev);
         exit(INTERFACE_ERROR);
@@ -266,20 +278,22 @@ int main(int argc, char * argv[]) {
  *          - čas přijetí paketu
  *          - zdrojová a cílová adresa(nebo jméno, pokud se adresa podaří přeložit)
  *          - zdrojový a cílový port
- * @param buffer ukazatel na pole obsahující data příchozího paketu
+ * @param packet ukazatel na pole obsahující data příchozího paketu
  * @param frame ukazatel na strukturu představující zaobalující rámec celého paketu, 
  *              odsud funkce získává čas přijetí paketu
  * @param source_port zdrojový port
  * @param dest_port cílový port
  */
-void
-print_packet_preamble(unsigned char *buffer, const struct pcap_pkthdr *frame, uint16_t source_port, uint16_t dest_port,
-                      sa_family_t ip_version){
-    auto * eth = (struct ethhdr *)buffer;
+void print_packet_preamble(unsigned char * packet,
+                           const struct pcap_pkthdr *frame,
+                           uint16_t source_port,
+                           uint16_t dest_port,
+                           sa_family_t ip_version){
+    auto * eth = (struct ethhdr *)packet;
     unsigned short ethhdrlen = sizeof(struct ethhdr);
-    auto * iph = (struct iphdr *)(buffer + ethhdrlen);
-    auto * ip6h = (struct ip6_hdr *)(buffer + ethhdrlen);
-    auto * arph = (struct arphdr *)(buffer + ethhdrlen);
+    auto * iph = (struct iphdr *)(packet + ethhdrlen);
+    auto * ip6h = (struct ip6_hdr *)(packet + ethhdrlen);
+    auto * arph = (struct arphdr *)(packet + ethhdrlen);
 
     //"vyčistí" socket
     memset(&sock_source_4, 0, sizeof(sock_source_4));
@@ -287,6 +301,7 @@ print_packet_preamble(unsigned char *buffer, const struct pcap_pkthdr *frame, ui
     memset(&sock_source_6, 0, sizeof(sock_source_6));
     memset(&sock_dest_6, 0, sizeof(sock_dest_6));
     char * src_name_print;
+    char * src_name_print_tmp[INET6_ADDRSTRLEN];
     char * dest_name_print;
     char * dest_name_print_tmp[INET6_ADDRSTRLEN];
     char src_name[NI_MAXHOST];
@@ -299,7 +314,7 @@ print_packet_preamble(unsigned char *buffer, const struct pcap_pkthdr *frame, ui
         sock_dest_4.sin_addr.s_addr = iph->daddr;
 
         //zdrojová adresa
-        int rc_s = getnameinfo((struct sockaddr*)&sock_source_4, sizeof(sock_source_4),
+        int rc_s = getnameinfo((struct sockaddr *)&sock_source_4, sizeof(sock_source_4),
                              src_name, sizeof(src_name),nullptr, 0, 0);
         if (rc_s != 0)
             src_name_print = inet_ntoa(sock_source_4.sin_addr);
@@ -307,7 +322,7 @@ print_packet_preamble(unsigned char *buffer, const struct pcap_pkthdr *frame, ui
             src_name_print = src_name;
 
         //cílová adresa
-        int rc_d = getnameinfo((struct sockaddr*)&sock_dest_4, sizeof(sock_dest_4),
+        int rc_d = getnameinfo((struct sockaddr *)&sock_dest_4, sizeof(sock_dest_4),
                                dest_name, sizeof(dest_name),nullptr, 0, 0);
         if (rc_d != 0)
             dest_name_print = inet_ntoa(sock_dest_4.sin_addr);
@@ -321,18 +336,20 @@ print_packet_preamble(unsigned char *buffer, const struct pcap_pkthdr *frame, ui
         sock_dest_6.sin6_addr = ip6h->ip6_dst;
 
         //zdrojová adresa
-        int rc_s = getnameinfo((struct sockaddr*)&sock_source_6, sizeof(sock_source_6),
+        int rc_s = getnameinfo((struct sockaddr *)&sock_source_6, sizeof(sock_source_6),
                              src_name, sizeof(src_name),nullptr, 0, 0);
-        if (rc_s != 0)
-            src_name_print = inet_ntoa(sock_source_4.sin_addr);
+        if (rc_s != 0){
+            inet_ntop(AF_INET6, &(sock_source_6.sin6_addr), (char *)(src_name_print_tmp),INET6_ADDRSTRLEN);
+            src_name_print = (char *)src_name_print_tmp;
+        }
         else
             src_name_print = src_name;
+
         //cílová adresa
-        int rc_d = getnameinfo((struct sockaddr*)&sock_dest_6, sizeof(sock_dest_6),
+        int rc_d = getnameinfo((struct sockaddr *)&sock_dest_6, sizeof(sock_dest_6),
                                dest_name, sizeof(dest_name),nullptr, 0, 0);
         if (rc_d != 0){
-            inet_ntop(AF_INET6, &(sock_dest_6.sin6_addr), (char *)(dest_name_print_tmp),
-                      INET6_ADDRSTRLEN);
+            inet_ntop(AF_INET6, &(sock_dest_6.sin6_addr), (char *)(dest_name_print_tmp),INET6_ADDRSTRLEN);
             dest_name_print = (char *)(dest_name_print_tmp);
         }
         else
@@ -358,22 +375,22 @@ print_packet_preamble(unsigned char *buffer, const struct pcap_pkthdr *frame, ui
 
 /**
  * @brief Funkce tiskne nejprve ethernetovou, IP a TCP hlavičku, pak jeden prázdný řádek a následně samotná data.
- * @param buffer ukazatel na pole obsahující data příchozího paketu
+ * @param packet ukazatel na pole obsahující data příchozího paketu
  * @param frame ukazatel na strukturu představující zaobalující rámec celého paketu,
  *              odsud funkce získává čas přijetí paketu
  * @param size celková velikost paketu
  */
-void print_tcp_packet(unsigned char *buffer, const struct pcap_pkthdr *frame, int size, sa_family_t ip_version)
+void print_tcp_packet(unsigned char * packet, const struct pcap_pkthdr * frame, int size, sa_family_t ip_version)
 {
     unsigned short ethhdrlen = sizeof(struct ethhdr);
     unsigned short iphXhdrlen;
 
     //IPv4
     if (ip_version == AF_INET){
-        auto * iph = (struct iphdr *)(buffer + sizeof(struct ethhdr) );
+        auto * iph = (struct iphdr *)(packet + sizeof(struct ethhdr) );
         iphXhdrlen = (unsigned short) iph->ihl * 4;
         //IP hlavička musí mít 20-60 bajtů
-        if (iphXhdrlen < 20 || iphXhdrlen > 60) {
+        if (iphXhdrlen < 20 or iphXhdrlen > 60) {
             fprintf(error_logfile,"\n   Neplatná délka IPv4 hlavičky, délka = %u bajtů\n", iphXhdrlen);
             exit(PACKET_ERROR);
         }
@@ -382,41 +399,41 @@ void print_tcp_packet(unsigned char *buffer, const struct pcap_pkthdr *frame, in
     else
         iphXhdrlen = 40;
 
+    auto * tcph = (struct tcphdr *)(packet + iphXhdrlen + ethhdrlen);
 
-    auto * tcph = (struct tcphdr*)(buffer + iphXhdrlen + ethhdrlen);
     //doff = data offset, horní 4 bity 46.bajtu, násobeno 4, protože se jedná o počet 32-bitových slov, 32bitů = 4bajtů
     //viz https://en.wikipedia.org/wiki/Transmission_Control_Protocol
     int tcphdrlen = tcph->doff * 4;
 
     int header_size = ethhdrlen + iphXhdrlen + tcphdrlen;
 
-    print_packet_preamble(buffer, frame, ntohs(tcph->source), ntohs(tcph->dest), ip_version);
+    print_packet_preamble(packet, frame, ntohs(tcph->source), ntohs(tcph->dest), ip_version);
 
     fprintf(logfile , "\n");
-    print_data(buffer, header_size);
+    print_data(packet, header_size);
     fprintf(logfile , "\n");
-    print_data(buffer + header_size, size - header_size);
+    print_data(packet + header_size, size - header_size);
     fprintf(logfile , "\n");
 }
 
 /**
  * @brief Funkce tiskne nejprve ethernetovou, IP a UDP hlavičku, pak jeden prázdný řádek a následně samotná data.
- * @param buffer ukazatel na pole obsahující data příchozího paketu
+ * @param packet ukazatel na pole obsahující data příchozího paketu
  * @param frame ukazatel na strukturu představující zaobalující rámec celého paketu,
  *              odsud funkce získává čas přijetí paketu
  * @param size celková velikost paketu
  */
-void print_udp_packet(unsigned char *buffer, const struct pcap_pkthdr *frame, int size, sa_family_t ip_version)
+void print_udp_packet(unsigned char * packet, const struct pcap_pkthdr * frame, int size, sa_family_t ip_version)
 {
     unsigned short ethhdrlen = sizeof(struct ethhdr);
     unsigned short iphXhdrlen;
 
     //IPv4
     if (ip_version == AF_INET){
-        auto * iph = (struct iphdr *)(buffer + sizeof(struct ethhdr) );
-        iphXhdrlen = (unsigned short) iph->ihl*4;
+        auto * iph = (struct iphdr *)(packet + sizeof(struct ethhdr) );
+        iphXhdrlen = (unsigned short) iph->ihl * 4;
         //IP hlavička musí mít 20-60 bajtů
-        if (iphXhdrlen < 20 || iphXhdrlen > 60) {
+        if (iphXhdrlen < 20 or iphXhdrlen > 60) {
             fprintf(error_logfile,"\n   Neplatná délka IPv4 hlavičky, délka = %u bajtů\n", iphXhdrlen);
             exit(PACKET_ERROR);
         }
@@ -425,45 +442,44 @@ void print_udp_packet(unsigned char *buffer, const struct pcap_pkthdr *frame, in
     else
         iphXhdrlen = 40;
 
-    auto * udph = (struct udphdr*)(buffer + iphXhdrlen + ethhdrlen);
+    auto * udph = (struct udphdr*)(packet + iphXhdrlen + ethhdrlen);
     unsigned short udphdrlen = 8; //UDP hlavička má vždy 8 bajtů
 
     int header_size = ethhdrlen + iphXhdrlen + udphdrlen;
 
-    print_packet_preamble(buffer, frame, ntohs(udph->source), ntohs(udph->dest), ip_version);
+    print_packet_preamble(packet, frame, ntohs(udph->source), ntohs(udph->dest), ip_version);
     fprintf(logfile , "\n");
-    print_data(buffer, header_size);
+    print_data(packet, header_size);
     fprintf(logfile , "\n");
-    print_data(buffer + header_size, size - header_size);
+    print_data(packet + header_size, size - header_size);
     fprintf(logfile , "\n");
 }
 void print_bytes(int size){
-    if (size >= 0x0 && size <= 0xf)
+    if (size >= 0x0 and size <= 0xf)
         fprintf(logfile , "0x000%x:", size);
-    else if (size >= 0x10 && size <= 0xff)
+    else if (size >= 0x10 and size <= 0xff)
         fprintf(logfile , "0x00%x:", size);
-    else if (size >= 0x100 && size <= 0xfff)
+    else if (size >= 0x100 and size <= 0xfff)
         fprintf(logfile , "0x0%x:", size);
     else
         fprintf(logfile , "0x%x:", size);
 }
 
 
-void print_data (unsigned char* data , int size)
+void print_data(unsigned char *data, int size)
 {
     int i, j, k;
-    for(i=0 ; i < size ; i++)
+    for(i = 0 ; i < size ; i++)
     {
-        if (i != 0 && i % 8 == 0 && i % 16 != 0)//mezera navíc ve výpisu hodnot
+        if (i != 0 and i % 8 == 0 and i % 16 != 0)//po 8 bajtech mezera navíc
             fprintf(logfile, " ");
-        if( i!=0 && i%16==0)   //if one line of hex printing is complete...
-        {
+
+        if(i != 0 and i % 16 == 0){
             fprintf(logfile , "   ");
-            for(j=i-16 ; j<i ; j++)
-            {
-                if (j != 0 && j % 8 == 0 && j % 16 != 0)//mezera navíc ve výpisu hodnot
+            for(j = i - 16; j < i; j++){
+                if (j != 0 and j % 8 == 0 and j % 16 != 0)//mezera navíc ve výpisu hodnot
                     fprintf(logfile, " ");
-                if(data[j]>=32 && data[j]<=127)
+                if(data[j] >= 32 and data[j] <= 127)
                     fprintf(logfile , "%c",(unsigned char)data[j]);
                 else
                     fprintf(logfile , ".");
@@ -472,37 +488,35 @@ void print_data (unsigned char* data , int size)
         }
 
         if(i % 16 == 0){
-            print_bytes(bytes_read); //pocet doposud vytisnutych bajtu napr. 0x0010
+            print_bytes(bytes_read); //počet doposud vytisnutych bajtu napr. 0x0010
             bytes_read += 0x10;
             fprintf(logfile , "  ");
         }
 
         fprintf(logfile , " %02X",(unsigned int)data[i]);
 
-        //specialni postup pro posledni radek dat, musi se vyplnit prazdny prostor
-        if(i == size - 1)
-        {
+        //speciální postup pro poslední řadek dat, musí se vyplnit prázdný prostor
+        if(i == size - 1){
             //padding mezer
             k = 0;
-            for(j=0; j<15-i%16; j++){
-                if (i != 0 && i % 8 == 0 && i % 16 != 0)//mezera navíc ve výpisu hodnot
+            for(j = 0; j < 15 - i % 16; j++){
+                if (i != 0 and i % 8 == 0 and i % 16 != 0)//mezera navíc ve výpisu hodnot
                     fprintf(logfile, " ");
                 fprintf(logfile , "   ");
                 k++;
             }
-            //na posledním řádku se nevytiskla prostřední mezera, je potřebaj i dotisknout
+            //na posledním řádku se nevytiskla prostřední mezera, je potřeba ji dotisknout
             if (k >= 8)
                 fprintf(logfile, " ");
 
-            //mezera mezi hexa a tisknutelnymi znaky
+            //mezera mezi hexa a tisknutelnými znaky
             fprintf(logfile , "   ");
 
             //tisknutelne znaky, jinak tecka
-            for(j = i - i % 16; j <= i; j++)
-            {
-                if (j != 0 && j % 8 == 0 && j % 16 != 0)//mezera navíc ve výpisu hodnot
+            for(j = i - i % 16; j <= i; j++){
+                if (j != 0 and j % 8 == 0 and j % 16 != 0)//mezera navíc ve výpisu hodnot
                     fprintf(logfile, " ");
-                if(data[j] >= 32 && data[j] <= 127)
+                if(data[j] >= 32 and data[j] <= 127)
                     fprintf(logfile , "%c",(unsigned char)data[j]);
                 else
                     fprintf(logfile , ".");
@@ -510,4 +524,6 @@ void print_data (unsigned char* data , int size)
             fprintf(logfile ,  "\n" );
         }
     }
+    if (i % 16 != 0)
+        bytes_read -= 0x10 - i % 16; //korekce výpisu počtu přečtených bajtů kvůli rozdělení hlavičky a dat do dvou bloků
 }

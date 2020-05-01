@@ -2,44 +2,36 @@
 // Created by richardklem on 23.04.20.
 //
 #include<netinet/in.h>
-#include<errno.h>
 #include<netdb.h>
-#include<stdio.h> //For standard things
-#include<stdlib.h>    //malloc
-#include<string>    //strlen
+#include<cstdio> //For standard things
+#include<cstdlib>    //malloc
 #include <cstring>
-
 #include<netinet/ip_icmp.h>   //Provides declarations for icmp header
 #include<netinet/udp.h>   //Provides declarations for udp header
 #include<netinet/tcp.h>   //Provides declarations for tcp_count header
 #include<netinet/ip.h>    //Provides declarations for ip header
 #include <netinet/ip6.h>
-#include <net/if_arp.h>
-#include<netinet/if_ether.h>  //For ETH_P_ALL
 #include<net/ethernet.h>  //For ether_header
 #include<sys/socket.h>
 #include<arpa/inet.h>
-#include<sys/ioctl.h>
 #include<ctime>
 #include<sys/types.h>
-#include<unistd.h>
 #include <pcap.h>
 #include <getopt.h>
-#include <iomanip>
-#include <iostream>
-#include <sstream>
 #include <csignal>
-#include <map>
-#include "functions.h"
+#include <netinet/ether.h>
+#include "my_getnameinfo.h"
+#include "my_arp.h"
 #include "my_string.h"
-#include "proj.h"
+#include "ipk-sniffer.h"
+
 
 //definice globálních proměnných
 struct sockaddr_in sock_source_4, sock_dest_4;
 struct sockaddr_in6 sock_source_6, sock_dest_6;
 int tcp_count = 0, udp_count = 0, total = 0, others = 0;
 char * interface_arg;
-int interface_flag = 0, tcp_flag = 0, udp_flag = 0, arp_flag = 0, ip6_flag = 0, ip4_flag = 0, port_flag = 0, port_arg = 0, num_arg = 1, bytes_read = 0;
+int interface_flag = 0, tcp_flag = 0, udp_flag = 0, arp_flag = 0, ip6_flag = 0, ip4_flag = 0, all_flag = 0, port_flag = 0, port_arg = 0, num_arg = 1, bytes_read = 0;
 FILE * logfile = stdout;
 FILE * error_logfile = stderr;
 
@@ -52,12 +44,13 @@ struct option long_options[] =
                 {"arp",  no_argument,        0, 'a'},
                 {"ip6",  no_argument,        0, '6'},
                 {"ip4",  no_argument,        0, '4'},
+                {"all",  no_argument,        0, 'A'},
                 {"num",  optional_argument,  0, 'n'},
                 {"port", optional_argument,  0, 'p'},
                 {0, 0, 0, 0}  // ukoncovaci prvek
         };
 //definice krátkých přepínačů
-char *short_options = (char*)"hn:p:tua64i:";
+char *short_options = (char*)"htua64An:p:i:";
 
 
 
@@ -88,7 +81,7 @@ void callback(u_char * args, const struct pcap_pkthdr * header, const u_char * p
 
     eth->h_proto = (packet[12] << (unsigned int) 8) + packet[13]; //nastavení ether type z ethernetového rámce
 
-    //Zjištění typu IP, případně ARP a typ protokolu
+    //Zpracování ether typu
     if (eth->h_proto == ETH_P_IP){
         sock_source_4.sin_family = AF_INET;
         ip_version = AF_INET;
@@ -101,10 +94,13 @@ void callback(u_char * args, const struct pcap_pkthdr * header, const u_char * p
     }
     else if (eth->h_proto == ETH_P_ARP)
         is_arp = true;
-    else //Něco nepodporovaného, třeba LLDP, STP, ...
-        return;
+    else{  // něco nepodporovaného
+        others++;
+        return;  // není třeba zpracovat, ale je potřeba inkrementovat pouze jednou
+    }
 
-    //Zpracování podle typu paketu
+
+    // Zpracování podle typu protokolu
     if (is_arp)
         print_arp_packet((unsigned char *) packet, header, header->len);
     else if (protocol == IPPROTO_TCP){
@@ -133,7 +129,7 @@ int main(int argc, char * argv[]) {
     int c;
     int option_index;
 
-    //zpracování argumentů
+    // zpracování argumentů
     if (argc > 1){
         while ((c = getopt_long(argc, argv, short_options, long_options, &option_index)) != -1)
         {
@@ -156,48 +152,64 @@ int main(int argc, char * argv[]) {
                         port_arg = p_tmp->num;
                     }
                     else {
-                        fprintf(error_logfile, "\n   Nesprávný formát čísla. Zadali jste %s.\n", optarg);
+                        fprintf(error_logfile, "\n%s   Nesprávný formát čísla. Zadali jste %s.%s\n\n", RED, optarg, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     break;
                 case 'n':
                     if (p_tmp->status){
                         if (p_tmp->num < 0){
-                            fprintf(error_logfile, "\n   Nesprávná hodnota čísla. Zadali jste %d.\n", p_tmp->num);
+                            fprintf(error_logfile, "\n%s   Nesprávná hodnota čísla. Zadali jste %d.%s\n\n", RED, p_tmp->num, RST);
                             exit(BAD_ARG_VALUE);
                         }
                         num_arg = p_tmp->num;
                     }
                     else{
-                        fprintf(error_logfile, "\n   Nesprávný formát čísla. Zadali jste %s.\n", optarg);
+                        fprintf(error_logfile, "\n%s   Nesprávný formát čísla. Zadali jste %s.%s\n\n", RED, optarg, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     break;
                 case 't':
                     if (p_tmp->status == S2I_OK){
-                        fprintf(error_logfile, "\n   Parametr -t | --tcp nepřijímá žádné argumenty.\n");
+                        fprintf(error_logfile, "\n%s   Parametr -t | --tcp nepřijímá žádné argumenty.%s\n\n", RED, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     tcp_flag = 1;
                     break;
                 case 'u':
                     if (p_tmp->status == S2I_OK){
-                        fprintf(error_logfile, "\n   Parametr -u | --udp nepřijímá žádné argumenty.\n");
+                        fprintf(error_logfile, "\n%s   Parametr -u | --udp nepřijímá žádné argumenty.%s\n\n", RED, RST);
                         exit(BAD_ARG_VALUE);
                     }
+                    udp_flag = 1;
+                    break;
+                case 'a':
+                    if (p_tmp->status == S2I_OK){
+                        fprintf(error_logfile, "\n%s   Parametr -a | --arp nepřijímá žádné argumenty.%s\n\n", RED, RST);
+                        exit(BAD_ARG_VALUE);
+                    }
+                    arp_flag = 1;
+                    break;
                 case '6':
                     if (p_tmp->status == S2I_OK){
-                        fprintf(error_logfile, "\n   Parametr -6 | --ip6 nepřijímá žádné argumenty.\n");
+                        fprintf(error_logfile, "\n%s   Parametr -6 | --ip6 nepřijímá žádné argumenty.%s\n\n", RED, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     ip6_flag = 1;
                     break;
                 case '4':
                     if (p_tmp->status == S2I_OK){
-                        fprintf(error_logfile, "\n   Parametr -4 | --ip4 nepřijímá žádné argumenty.\n");
+                        fprintf(error_logfile, "\n%s   Parametr -4 | --ip4 nepřijímá žádné argumenty.%s\n\n", RED, RST);
                         exit(BAD_ARG_VALUE);
                     }
-                    ip6_flag = 1;
+                    ip4_flag = 1;
+                    break;
+                case 'A':
+                    if (p_tmp->status == S2I_OK){
+                        fprintf(error_logfile, "\n%s   Parametr -A | --all nepřijímá žádné argumenty.%s\n\n", RED, RST);
+                        exit(BAD_ARG_VALUE);
+                    }
+                    all_flag = 1;
                     break;
                 default:
                     exit(UNKNOWN_PARAMETER);
@@ -210,17 +222,26 @@ int main(int argc, char * argv[]) {
     }
 
     char error[PCAP_ERRBUF_SIZE];
-    pcap_if_t *interfaces, *tmp;
+    pcap_if_t * interfaces, * tmp;
     int i = 0;
 
     if (pcap_findalldevs(&interfaces, error) == -1){
-        fprintf(error_logfile, "\n   Nastala chyba při zjišťování dostupných rozhraní.\n");
+        fprintf(error_logfile, "\n%s   Nastala chyba při zjišťování dostupných rozhraní.%s\n\n", RED, RST);
         exit(INTERFACE_ERROR);
     }
     if (interface_flag == 0){
-        fprintf(logfile, "\n Dostupná rozhraní:");
-        for(tmp = interfaces; tmp; tmp = tmp->next)
-            fprintf(logfile, "\n   %d :  %s | %s", i++, tmp->name, tmp->description);
+        int maxlen = 0;
+        fprintf(logfile, "\n\033[0;93m Specifikujte rozhraní.%s\n Dostupná rozhraní:\n", RST);
+        for(tmp = interfaces; tmp; tmp = tmp->next){
+            if ((int)strlen(tmp->name) > maxlen)
+                maxlen = (int)strlen(tmp->name) - maxlen;
+        }
+        for(tmp = interfaces; tmp; tmp = tmp->next) {
+            fprintf(logfile, "   %d :  %s", i++, tmp->name);
+            for (int j = maxlen - (int)strlen(tmp->name); 0 < j; j--)
+                fprintf(logfile, " ");
+            fprintf(logfile, " | %s\n", tmp->description);
+        }
         fprintf(logfile, "\n");
         exit(OK);
     }
@@ -233,62 +254,68 @@ int main(int argc, char * argv[]) {
             }
         }
         if (!is_valid){
-            fprintf(error_logfile, "\n   Zadané rozhraní - \"%s\" není dostupné.\n", interface_arg);
+            fprintf(error_logfile, "\n%s   Zadané rozhraní \"%s\" není dostupné.%s\n\n", RED, interface_arg, RST);
             exit(INTERFACE_ERROR);
         }
         dev = interface_arg;
     }
 
-    //https://linux.die.net/man/3/pcap_lookupnet
+    // https://linux.die.net/man/3/pcap_lookupnet
     if (pcap_lookupnet(dev, &net, &mask, errbuf) == -1) {
-        fprintf(error_logfile, "\n   Nepodařilo se získat masku podsítě pro rozhraní - \"%s\".\n", dev);
+        fprintf(error_logfile, "\n%s   Nepodařilo se získat masku podsítě pro rozhraní - \"%s\".%s\n\n", RED, dev, RST);
         net = 0;
         mask = 0;
     }
 
     handle = pcap_open_live(dev, BUFFER_SIZE, 1, 100, errbuf);
     if (handle == nullptr) {
-        fprintf(error_logfile, "\n   Rozhraní - \"%s\" se nepodařilo otevřít.\n", dev);
+        fprintf(error_logfile, "\n%s   Rozhraní \"%s\" se nepodařilo otevřít.%s\n\n", RED, dev, RST);
         exit(INTERFACE_ERROR);
     }
 
-    if (ip4_flag)
+    if (ip4_flag and ip6_flag)
+        sprintf(filter_exp, "(ether proto \\ip or ether proto \\ip6) and ");
+    else if (ip4_flag)
         sprintf(filter_exp, "ether proto \\ip and ");
     else if (ip6_flag)
         sprintf(filter_exp, "ether proto \\ip6 and ");
 
-    if (arp_flag)
-        sprintf(filter_exp, "ether proto \\arp and ");
-
-    if (port_flag){
-        if ((!tcp_flag and !udp_flag) or (tcp_flag and udp_flag))
-            sprintf(filter_exp + strlen(filter_exp), "(udp port %d or tcp port %d)", port_arg, port_arg);
-        else if (tcp_flag)
-            sprintf(filter_exp + strlen(filter_exp), "tcp port %d", port_arg);
-        else if (udp_flag)
-            sprintf(filter_exp + strlen(filter_exp), "udp port %d", port_arg);
-    }
+    if (all_flag)
+    {}
+    else if (arp_flag)
+        sprintf(filter_exp, "ether proto \\arp");
     else{
-        if ((!tcp_flag and !udp_flag) or (tcp_flag and udp_flag))
-            sprintf(filter_exp + strlen(filter_exp), "(udp or tcp)");
-        else if (tcp_flag)
-            sprintf(filter_exp + strlen(filter_exp), "tcp");
-        else if (udp_flag)
-            sprintf(filter_exp + strlen(filter_exp), "udp");
+        if (port_flag){
+            if ((!tcp_flag and !udp_flag) or (tcp_flag and udp_flag))
+                sprintf(filter_exp + strlen(filter_exp), "(udp port %d or tcp port %d)", port_arg, port_arg);
+            else if (tcp_flag)
+                sprintf(filter_exp + strlen(filter_exp), "tcp port %d", port_arg);
+            else if (udp_flag)
+                sprintf(filter_exp + strlen(filter_exp), "udp port %d", port_arg);
+        }
+        else{
+            if ((!tcp_flag and !udp_flag) or (tcp_flag and udp_flag))
+                sprintf(filter_exp + strlen(filter_exp), "(udp or tcp)");
+            else if (tcp_flag)
+                sprintf(filter_exp + strlen(filter_exp), "tcp");
+            else if (udp_flag)
+                sprintf(filter_exp + strlen(filter_exp), "udp");
+        }
     }
 
-    printf("%s", filter_exp);
+
+    //printf("%s", filter_exp); //todo debug
     if (pcap_compile(handle, &fp, filter_exp, 0, net) == -1) {
-        fprintf(error_logfile, "\n   Nepodařilo se přeložit filtr - \"%s\" na rozhraní - \"%s\".\n", filter_exp, dev);
+        fprintf(error_logfile, "\n   Nepodařilo se přeložit filtr \"%s\" na rozhraní \"%s\".\n\n", filter_exp, dev);
         exit(INTERFACE_ERROR);
     }
 
     if (pcap_setfilter(handle, &fp) == -1) {
-        fprintf(error_logfile, "\n   Nepodařilo se aplikovat filtr - \"%s\" na rozhraní - \"%s\".\n", filter_exp, dev);
+        fprintf(error_logfile, "\n   Nepodařilo se aplikovat filtr \"%s\" na rozhraní \"%s\".\n\n", filter_exp, dev);
         exit(INTERFACE_ERROR);
     }
 
-    //cyklus dokud pocet prectenych paketu neni roven num_arg
+    // cyklus dokud počet přijatých paketu není roven num_arg
     pcap_loop(handle, num_arg, callback, nullptr); //https://linux.die.net/man/3/pcap_loop
     pcap_close(handle);
     exit(OK);
@@ -307,25 +334,14 @@ int main(int argc, char * argv[]) {
  */
 void print_packet_preamble(unsigned char *packet, const struct pcap_pkthdr *frame, sa_family_t ip_version,
                            uint16_t dest_port = 0, uint16_t source_port = 0) {
-    auto * eth = (struct ethhdr *)packet;
     unsigned short ethhdrlen = sizeof(struct ethhdr);
-    auto * iph = (struct iphdr *)(packet + ethhdrlen);
-    auto * ip6h = (struct ip6_hdr *)(packet + ethhdrlen);
-
-/*
-    //"vyčistí" socket
-    memset(&sock_source_4, 0, sizeof(sock_source_4));
-    memset(&sock_dest_4, 0, sizeof(sock_dest_4));
-    memset(&sock_source_6, 0, sizeof(sock_source_6));
-    memset(&sock_dest_6, 0, sizeof(sock_dest_6));*/
     char * src_name_print;
-    char * src_name_print_tmp[INET6_ADDRSTRLEN];
     char * dest_name_print;
-    char * dest_name_print_tmp[INET6_ADDRSTRLEN];
     char src_name[NI_MAXHOST];
     char dest_name[NI_MAXHOST];
 
-    if (ip_version == AF_INET){ //IPv4
+    if (ip_version == AF_INET){
+        auto * iph = (struct iphdr *)(packet + ethhdrlen);
         ip_generic_addr addr{};
         addr.address.addr = iph->saddr;
 
@@ -340,6 +356,7 @@ void print_packet_preamble(unsigned char *packet, const struct pcap_pkthdr *fram
 
     }
     else if (ip_version == AF_INET6){
+        auto * ip6h = (struct ip6_hdr *)(packet + ethhdrlen);
         ip_generic_addr addr{};
         addr.address.addr6 = ip6h->ip6_src;
 
@@ -352,8 +369,20 @@ void print_packet_preamble(unsigned char *packet, const struct pcap_pkthdr *fram
         getnameinfo(addr, ip_version, dest_name);
         dest_name_print = dest_name;
     }
+    //ARP
     else{
+        auto * arp = (struct arp *)(packet + ethhdrlen);
+        tm * time = localtime(&(frame->ts.tv_sec));
+        int hours = time->tm_hour;
+        int minutes = time->tm_min;
+        int seconds = time->tm_sec;
+        long int microseconds = frame->ts.tv_usec;
 
+        char tmp[INET_ADDRSTRLEN];
+        fprintf(logfile, "\n%02d:%02d:%02d.%06ld ", hours, minutes, seconds, microseconds);
+        fprintf(logfile , "%s(%s) > ", inet_ntop(AF_INET, &(arp->src_ip), (char *)(tmp), INET_ADDRSTRLEN), ether_ntoa((ether_addr*)arp->src_mac));
+        fprintf(logfile , "%s(%s)\n", inet_ntop(AF_INET, &(arp->dst_ip), (char *)(tmp), INET_ADDRSTRLEN), ether_ntoa((ether_addr*)arp->dst_mac));
+        return;
     }
 
     //získání a zpracování "časové stopy" paketu
@@ -456,15 +485,13 @@ void print_udp_packet(unsigned char * packet, const struct pcap_pkthdr * frame, 
  *              odsud funkce získává čas přijetí paketu
  * @param size celková velikost paketu
  */
-void print_arp_packet(unsigned char *packet, struct pcap_pkthdr *frame, int size) {
+void print_arp_packet(unsigned char *packet, const struct pcap_pkthdr *frame, int size) {
     unsigned short ethhdrlen = sizeof(struct ethhdr);
-    unsigned short arphdrlen;
-    auto * arph = (struct arphdr *)(packet + ethhdrlen);
-
+    unsigned short arphdrlen = 28;
 
     int header_size = ethhdrlen + arphdrlen;
 
-    print_packet_preamble(packet, frame, , ntohs(udph->dest), ntohs(udph->source));
+    print_packet_preamble(packet, frame, AF_UNSPEC);
     fprintf(logfile , "\n");
     print_data(packet, header_size);
     fprintf(logfile , "\n");
@@ -472,12 +499,19 @@ void print_arp_packet(unsigned char *packet, struct pcap_pkthdr *frame, int size
     fprintf(logfile , "\n");
 }
 
-
+/**
+ * @brief Vytiskne číslo v hexadecimálním tvaru s fixní délkou 4 s vyplňujícími nulami před číslem
+ * @param size číslo, které se má vytisknout
+ */
 void print_bytes(int size){
     fprintf(logfile, "0x%04x", size);
 }
 
-
+/**
+ * @brief Funkce tiskne formátovný výstup dle specifikace snifferu.
+ * @param data ukazatel na začátek dat k vytištění
+ * @param size délka dat
+ */
 void print_data(unsigned char *data, int size)
 {
     int i, j, k;

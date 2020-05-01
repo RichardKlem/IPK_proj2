@@ -1,24 +1,16 @@
-.PHONY: run
-PCAP=/usr/include/pcap/
-SOURCES= proj.cpp my_string.cpp functions.cpp
+.PHONY: all run prog cleanall
+SOURCES= ipk-sniffer.cpp my_string.cpp my_getnameinfo.cpp my_dns_cache.cpp ipk-sniffer.h my_string.h my_getnameinfo.h my_dns_cache.h my_arp.h
 
-main: main.cpp
-	g++ -I$(PCAP) -o main main.cpp -lpcap
-
-proj: $(SOURCES)
-	g++ -Wextra -Wall -pedantic -I$(PCAP) -o proj proj.cpp my_string.cpp functions.cpp -lpcap
+all: $(SOURCES)
+	g++ -Wextra -Wall -pedantic -o ipk-sniffer ipk-sniffer.cpp my_string.cpp my_getnameinfo.cpp my_dns_cache.cpp -lpcap
 
 ifeq (run,$(firstword $(MAKECMDGOALS)))
   RUN_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
-  # ...and turn them into do-nothing targets
   $(eval $(RUN_ARGS):;@:)
 endif
 
-prog:
+run:
 	sudo ./proj $(RUN_ARGS)
 
-run : prog
-	@echo prog $(RUN_ARGS)
-
 cleanall:
-	rm main proj
+	rm  ipk-sniffer

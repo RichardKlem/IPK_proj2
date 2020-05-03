@@ -14,7 +14,7 @@
  * @param address generická struktura obsahující IPv4 nebo IPv6 adresu
  * @param ip_version Verze IP adresy
  * @param host Pokud se podaří adresu přeložit, uloží se do této proměnné doménové jméno. Jinak původní adresa.
- * @return Vrací 1, pokud je zadaná adresa IPv4 nebo IPv6, jinak 0.
+ * @return Vrací 1, pokud je zadaná adresa IPv4 nebo IPv6, jinak 0. V paměti host je uložen výsledek
  */
 int getnameinfo(ip_generic_addr address, sa_family_t ip_version, char * host) {
     struct sockaddr_in6 sa_in6{};

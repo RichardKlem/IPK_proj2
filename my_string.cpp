@@ -17,13 +17,17 @@ str2int_struct_t str2int (char * str){
     if (str == nullptr)
         return result;
 
-    std::stringstream ss(str);
+    // ošetření, že se nevyskytuje žádný NEnumerický znak
     for (unsigned int i = 0; i < strlen(str); ++i) {
         if (!isdigit(str[i]))
             return result;
     }
-    if((ss >> num).fail())
+
+    long int tmp = strtol(str, nullptr, 0);
+    if (tmp > 65535)  //port je velikosti unsigned int tedy čísla 0 - 65565
         return result;
+    num = (int) tmp;
+
     result = {S2I_OK, num};
     return result;
 }

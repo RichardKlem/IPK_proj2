@@ -5,6 +5,7 @@
 #ifndef PROJ2_MY_DNS_CACHE_H
 #define PROJ2_MY_DNS_CACHE_H
 
+#include <string>
 #include <sys/socket.h>
 
 /**
@@ -12,8 +13,8 @@
  *  Pokud se nepodařil překlad adresy, bude struktura obsahovat dvojici adresa:adresa.
  */
 struct dns_cache_record{
-    char * address;
-    char * hostname;
+    std::string address;
+    std::string hostname;
 };
 
 /**

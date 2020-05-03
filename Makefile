@@ -10,7 +10,7 @@ ifeq (run,$(firstword $(MAKECMDGOALS)))
 endif
 
 run:
-	sudo ./proj $(RUN_ARGS)
+	sudo ./ipk-sniffer $(RUN_ARGS)
 
 cleanall:
 	rm  ipk-sniffer

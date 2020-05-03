@@ -1,7 +1,10 @@
 //
 // Created by Richard Klem on 23.04.20.
 //
+#include <cstdint>
+#include <sys/socket.h>
 #include "my_string.h"
+
 
 #ifndef PROJ2_PROJ_H
 #define PROJ2_PROJ_H

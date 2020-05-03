@@ -3,15 +3,14 @@
 //
 #include<netinet/in.h>
 #include<netdb.h>
-#include<cstdio> //For standard things
-#include<cstdlib>    //malloc
+#include<cstdio>
+#include<cstdlib>
 #include <cstring>
-#include<netinet/ip_icmp.h>   //Provides declarations for icmp header
-#include<netinet/udp.h>   //Provides declarations for udp header
-#include<netinet/tcp.h>   //Provides declarations for tcp_count header
-#include<netinet/ip.h>    //Provides declarations for ip header
+#include<netinet/udp.h>
+#include<netinet/tcp.h>
+#include<netinet/ip.h>
 #include <netinet/ip6.h>
-#include<net/ethernet.h>  //For ether_header
+#include<net/ethernet.h>
 #include<sys/socket.h>
 #include<arpa/inet.h>
 #include<ctime>
@@ -51,22 +50,19 @@ struct option long_options[] =
         };
 //definice krátkých přepínačů
 char *short_options = (char*)"htua64An:p:i:";
-
-
-
 /**
  * @brief Funkce slouží jako koncová procedura při zachycení signálu SIGINT
  * @param unused povinně přítomný argument, není dále využit
  */
 void signal_callback_handler(int unused) {
     unused = unused; //obelstění překladače a jeho varování na nevyužitou proměnnou
-    fprintf(logfile, "\n   Byl zaslán signál SIGINT, program se ukočuje.\n");
+    fprintf(logfile, "\n\n   Byl zaslán signál SIGINT, program se ukočuje.\n\n");
     exit(OK);
 }
 
 /**
  * @brief
- *      Podle dokumentace https://linux.die.net/man/3/pcap_loop musí mít tři argumenty
+ *      Podle dokumentace https://linux.die.net/man/3/pcap_loop musí mít tato tři argumenty
  * @param args argumenty od uživatele, v tomto programu VŽDY nullptr, dále se nevyužívá
  * @param header ukazatel na hlavičku rámce paketu
  * @param packet ukazatel na data paketu
@@ -116,15 +112,15 @@ void callback(u_char * args, const struct pcap_pkthdr * header, const u_char * p
 }
 
 int main(int argc, char * argv[]) {
-    signal(SIGINT, signal_callback_handler);
+    signal(SIGINT, signal_callback_handler);  // zacycení SIGINT v průběhu vykonávání programu
 
-    pcap_t * handle;			/* Session handle */
-    char * dev;			/* The device to sniff on */
-    char errbuf[PCAP_ERRBUF_SIZE];	/* Error string */
-    struct bpf_program fp{};		/* The compiled filter */
-    char filter_exp[PCAP_ERRBUF_SIZE] = "";	/* The filter expression */
-    bpf_u_int32 mask;		/* Our netmask */
-    bpf_u_int32 net;		/* Our IP */
+    pcap_t * handle;
+    char * dev;
+    char errbuf[PCAP_ERRBUF_SIZE];
+    struct bpf_program fp{};
+    char filter_exp[64] = "";
+    bpf_u_int32 mask;
+    bpf_u_int32 net;
 
     int c;
     int option_index;
@@ -281,7 +277,7 @@ int main(int argc, char * argv[]) {
         sprintf(filter_exp, "ether proto \\ip6 and ");
 
     if (all_flag)
-    {}
+    {}  // žádný filtr, zachytává se vše
     else if (arp_flag)
         sprintf(filter_exp, "ether proto \\arp");
     else{
@@ -304,7 +300,7 @@ int main(int argc, char * argv[]) {
     }
 
 
-    //printf("%s", filter_exp); //todo debug
+    printf("%s", filter_exp); //todo debug
     if (pcap_compile(handle, &fp, filter_exp, 0, net) == -1) {
         fprintf(error_logfile, "\n   Nepodařilo se přeložit filtr \"%s\" na rozhraní \"%s\".\n\n", filter_exp, dev);
         exit(INTERFACE_ERROR);
@@ -315,10 +311,17 @@ int main(int argc, char * argv[]) {
         exit(INTERFACE_ERROR);
     }
 
+    // Pokud je požadovaný počet opakování == 0, úspěšně se ukončí program.
+    // Funkce pcap_loop pro počet opakování == 0 cyklí "do nekonečna", tedy dokud není přerušen zvenčí.
+    if (num_arg == 0)
+        return OK;
+
     // cyklus dokud počet přijatých paketu není roven num_arg
-    pcap_loop(handle, num_arg, callback, nullptr); //https://linux.die.net/man/3/pcap_loop
+    pcap_loop(handle, num_arg, callback, nullptr);  // https://linux.die.net/man/3/pcap_loop
     pcap_close(handle);
-    exit(OK);
+    if (all_flag)
+        fprintf(logfile, "\nPočet nepodporovaných paketů: %d.\n", others);
+    return OK;
 }
 
 /**

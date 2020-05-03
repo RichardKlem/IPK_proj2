@@ -26,13 +26,13 @@
 
 
 //definice globálních proměnných
-struct sockaddr_in sock_source_4, sock_dest_4;
-struct sockaddr_in6 sock_source_6, sock_dest_6;
-int tcp_count = 0, udp_count = 0, total = 0, others = 0;
+struct sockaddr_in sock_source_4;
+struct sockaddr_in6 sock_source_6;
+int tcp_count = 0, udp_count = 0, arp_count = 0, total = 0, others = 0;
 char * interface_arg;
 int interface_flag = 0, tcp_flag = 0, udp_flag = 0, arp_flag = 0, ip6_flag = 0, ip4_flag = 0, all_flag = 0, port_flag = 0, port_arg = 0, num_arg = 1, bytes_read = 0;
-FILE * logfile = stdout;
-FILE * error_logfile = stderr;
+FILE * outfile = stdout;
+FILE * error_outfile = stderr;
 
 //definice dlouhých přepínačů
 struct option long_options[] =
@@ -56,7 +56,7 @@ char *short_options = (char*)"htua64An:p:i:";
  */
 void signal_callback_handler(int unused) {
     unused = unused; //obelstění překladače a jeho varování na nevyužitou proměnnou
-    fprintf(logfile, "\n\n   Byl zaslán signál SIGINT, program se ukočuje.\n\n");
+    fprintf(outfile, "\n\n   Byl zaslán signál SIGINT, program se ukočuje.\n\n");
     exit(OK);
 }
 
@@ -73,29 +73,28 @@ void callback(u_char * args, const struct pcap_pkthdr * header, const u_char * p
     sa_family_t ip_version = AF_UNSPEC;
     bool is_arp = false;
     int protocol;
-    auto * eth = (struct ethhdr *)packet;
 
-    eth->h_proto = (packet[12] << (unsigned int) 8) + packet[13]; //nastavení ether type z ethernetového rámce
+    auto ether_type = (packet[12] << (unsigned int) 8) + packet[13]; //nastavení ether type z ethernetového rámce
 
     //Zpracování ether typu
-    if (eth->h_proto == ETH_P_IP){
+    if (ether_type== ETH_P_IP){
         sock_source_4.sin_family = AF_INET;
         ip_version = AF_INET;
         protocol = packet[23];
     }
-    else if (eth->h_proto == ETH_P_IPV6){
+    else if (ether_type == ETH_P_IPV6){
         sock_source_6.sin6_family = AF_INET6;
         ip_version = AF_INET6;
         protocol = packet[20];
     }
-    else if (eth->h_proto == ETH_P_ARP)
+    else if (ether_type == ETH_P_ARP){
         is_arp = true;
+        arp_count++;
+    }
     else{  // něco nepodporovaného
         others++;
         return;  // není třeba zpracovat, ale je potřeba inkrementovat pouze jednou
     }
-
-
     // Zpracování podle typu protokolu
     if (is_arp)
         print_arp_packet((unsigned char *) packet, header, header->len);
@@ -129,9 +128,8 @@ int main(int argc, char * argv[]) {
     if (argc > 1){
         while ((c = getopt_long(argc, argv, short_options, long_options, &option_index)) != -1)
         {
-            str2int_struct_t *p_tmp = nullptr;
-            str2int_struct_t tmp = str2int(optarg);//pouzije se dale
-            p_tmp = &tmp;
+            str2int_struct_t tmp = str2int(optarg);
+            str2int_struct_t *p_tmp = &tmp;
 
             switch (c)
             {
@@ -148,61 +146,61 @@ int main(int argc, char * argv[]) {
                         port_arg = p_tmp->num;
                     }
                     else {
-                        fprintf(error_logfile, "\n%s   Nesprávný formát čísla. Zadali jste %s.%s\n\n", RED, optarg, RST);
+                        fprintf(error_outfile, "\n%s   Nesprávný formát čísla. Zadali jste %s.%s\n\n", RED, optarg, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     break;
                 case 'n':
                     if (p_tmp->status){
                         if (p_tmp->num < 0){
-                            fprintf(error_logfile, "\n%s   Nesprávná hodnota čísla. Zadali jste %d.%s\n\n", RED, p_tmp->num, RST);
+                            fprintf(error_outfile, "\n%s   Nesprávná hodnota čísla. Zadali jste %d.%s\n\n", RED, p_tmp->num, RST);
                             exit(BAD_ARG_VALUE);
                         }
                         num_arg = p_tmp->num;
                     }
                     else{
-                        fprintf(error_logfile, "\n%s   Nesprávný formát čísla. Zadali jste %s.%s\n\n", RED, optarg, RST);
+                        fprintf(error_outfile, "\n%s   Nesprávný formát čísla. Zadali jste %s.%s\n\n", RED, optarg, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     break;
                 case 't':
                     if (p_tmp->status == S2I_OK){
-                        fprintf(error_logfile, "\n%s   Parametr -t | --tcp nepřijímá žádné argumenty.%s\n\n", RED, RST);
+                        fprintf(error_outfile, "\n%s   Parametr -t | --tcp nepřijímá žádné argumenty.%s\n\n", RED, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     tcp_flag = 1;
                     break;
                 case 'u':
                     if (p_tmp->status == S2I_OK){
-                        fprintf(error_logfile, "\n%s   Parametr -u | --udp nepřijímá žádné argumenty.%s\n\n", RED, RST);
+                        fprintf(error_outfile, "\n%s   Parametr -u | --udp nepřijímá žádné argumenty.%s\n\n", RED, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     udp_flag = 1;
                     break;
                 case 'a':
                     if (p_tmp->status == S2I_OK){
-                        fprintf(error_logfile, "\n%s   Parametr -a | --arp nepřijímá žádné argumenty.%s\n\n", RED, RST);
+                        fprintf(error_outfile, "\n%s   Parametr -a | --arp nepřijímá žádné argumenty.%s\n\n", RED, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     arp_flag = 1;
                     break;
                 case '6':
                     if (p_tmp->status == S2I_OK){
-                        fprintf(error_logfile, "\n%s   Parametr -6 | --ip6 nepřijímá žádné argumenty.%s\n\n", RED, RST);
+                        fprintf(error_outfile, "\n%s   Parametr -6 | --ip6 nepřijímá žádné argumenty.%s\n\n", RED, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     ip6_flag = 1;
                     break;
                 case '4':
                     if (p_tmp->status == S2I_OK){
-                        fprintf(error_logfile, "\n%s   Parametr -4 | --ip4 nepřijímá žádné argumenty.%s\n\n", RED, RST);
+                        fprintf(error_outfile, "\n%s   Parametr -4 | --ip4 nepřijímá žádné argumenty.%s\n\n", RED, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     ip4_flag = 1;
                     break;
                 case 'A':
                     if (p_tmp->status == S2I_OK){
-                        fprintf(error_logfile, "\n%s   Parametr -A | --all nepřijímá žádné argumenty.%s\n\n", RED, RST);
+                        fprintf(error_outfile, "\n%s   Parametr -A | --all nepřijímá žádné argumenty.%s\n\n", RED, RST);
                         exit(BAD_ARG_VALUE);
                     }
                     all_flag = 1;
@@ -222,23 +220,23 @@ int main(int argc, char * argv[]) {
     int i = 0;
 
     if (pcap_findalldevs(&interfaces, error) == -1){
-        fprintf(error_logfile, "\n%s   Nastala chyba při zjišťování dostupných rozhraní.%s\n\n", RED, RST);
+        fprintf(error_outfile, "\n%s   Nastala chyba při zjišťování dostupných rozhraní.%s\n\n", RED, RST);
         exit(INTERFACE_ERROR);
     }
     if (interface_flag == 0){
         int maxlen = 0;
-        fprintf(logfile, "\n\033[0;93m Specifikujte rozhraní.%s\n Dostupná rozhraní:\n", RST);
+        fprintf(outfile, "\n\033[0;93m Specifikujte rozhraní.%s\n Dostupná rozhraní:\n", RST);
         for(tmp = interfaces; tmp; tmp = tmp->next){
             if ((int)strlen(tmp->name) > maxlen)
                 maxlen = (int)strlen(tmp->name) - maxlen;
         }
         for(tmp = interfaces; tmp; tmp = tmp->next) {
-            fprintf(logfile, "   %d :  %s", i++, tmp->name);
+            fprintf(outfile, "   %d :  %s", i++, tmp->name);
             for (int j = maxlen - (int)strlen(tmp->name); 0 < j; j--)
-                fprintf(logfile, " ");
-            fprintf(logfile, " | %s\n", tmp->description);
+                fprintf(outfile, " ");
+            fprintf(outfile, " | %s\n", tmp->description);
         }
-        fprintf(logfile, "\n");
+        fprintf(outfile, "\n");
         exit(OK);
     }
     else{
@@ -250,7 +248,7 @@ int main(int argc, char * argv[]) {
             }
         }
         if (!is_valid){
-            fprintf(error_logfile, "\n%s   Zadané rozhraní \"%s\" není dostupné.%s\n\n", RED, interface_arg, RST);
+            fprintf(error_outfile, "\n%s   Zadané rozhraní \"%s\" není dostupné.%s\n\n", RED, interface_arg, RST);
             exit(INTERFACE_ERROR);
         }
         dev = interface_arg;
@@ -258,14 +256,14 @@ int main(int argc, char * argv[]) {
 
     // https://linux.die.net/man/3/pcap_lookupnet
     if (pcap_lookupnet(dev, &net, &mask, errbuf) == -1) {
-        fprintf(error_logfile, "\n%s   Nepodařilo se získat masku podsítě pro rozhraní - \"%s\".%s\n\n", RED, dev, RST);
+        fprintf(error_outfile, "\n%s   Nepodařilo se získat masku podsítě pro rozhraní - \"%s\".%s\n\n", RED, dev, RST);
         net = 0;
         mask = 0;
     }
 
     handle = pcap_open_live(dev, BUFFER_SIZE, 1, 100, errbuf);
     if (handle == nullptr) {
-        fprintf(error_logfile, "\n%s   Rozhraní \"%s\" se nepodařilo otevřít.%s\n\n", RED, dev, RST);
+        fprintf(error_outfile, "\n%s   Rozhraní \"%s\" se nepodařilo otevřít.%s\n\n", RED, dev, RST);
         exit(INTERFACE_ERROR);
     }
 
@@ -300,14 +298,14 @@ int main(int argc, char * argv[]) {
     }
 
 
-    printf("%s", filter_exp); //todo debug
+    //printf("%s", filter_exp); //todo debug
     if (pcap_compile(handle, &fp, filter_exp, 0, net) == -1) {
-        fprintf(error_logfile, "\n   Nepodařilo se přeložit filtr \"%s\" na rozhraní \"%s\".\n\n", filter_exp, dev);
+        fprintf(error_outfile, "\n   Nepodařilo se přeložit filtr \"%s\" na rozhraní \"%s\".\n\n", filter_exp, dev);
         exit(INTERFACE_ERROR);
     }
 
     if (pcap_setfilter(handle, &fp) == -1) {
-        fprintf(error_logfile, "\n   Nepodařilo se aplikovat filtr \"%s\" na rozhraní \"%s\".\n\n", filter_exp, dev);
+        fprintf(error_outfile, "\n   Nepodařilo se aplikovat filtr \"%s\" na rozhraní \"%s\".\n\n", filter_exp, dev);
         exit(INTERFACE_ERROR);
     }
 
@@ -320,7 +318,7 @@ int main(int argc, char * argv[]) {
     pcap_loop(handle, num_arg, callback, nullptr);  // https://linux.die.net/man/3/pcap_loop
     pcap_close(handle);
     if (all_flag)
-        fprintf(logfile, "\nPočet nepodporovaných paketů: %d.\n", others);
+        fprintf(outfile, "\nPočet nepodporovaných paketů: %d.\n", others);
     return OK;
 }
 
@@ -342,6 +340,14 @@ void print_packet_preamble(unsigned char *packet, const struct pcap_pkthdr *fram
     char * dest_name_print;
     char src_name[NI_MAXHOST];
     char dest_name[NI_MAXHOST];
+
+
+    //získání a zpracování "časové stopy" paketu
+    tm * time = localtime(&(frame->ts.tv_sec));
+    int hours = time->tm_hour;
+    int minutes = time->tm_min;
+    int seconds = time->tm_sec;
+    long int microseconds = frame->ts.tv_usec;
 
     if (ip_version == AF_INET){
         auto * iph = (struct iphdr *)(packet + ethhdrlen);
@@ -372,32 +378,21 @@ void print_packet_preamble(unsigned char *packet, const struct pcap_pkthdr *fram
         getnameinfo(addr, ip_version, dest_name);
         dest_name_print = dest_name;
     }
-    //ARP
+    // ARP
     else{
         auto * arp = (struct arp *)(packet + ethhdrlen);
-        tm * time = localtime(&(frame->ts.tv_sec));
-        int hours = time->tm_hour;
-        int minutes = time->tm_min;
-        int seconds = time->tm_sec;
-        long int microseconds = frame->ts.tv_usec;
-
         char tmp[INET_ADDRSTRLEN];
-        fprintf(logfile, "\n%02d:%02d:%02d.%06ld ", hours, minutes, seconds, microseconds);
-        fprintf(logfile , "%s(%s) > ", inet_ntop(AF_INET, &(arp->src_ip), (char *)(tmp), INET_ADDRSTRLEN), ether_ntoa((ether_addr*)arp->src_mac));
-        fprintf(logfile , "%s(%s)\n", inet_ntop(AF_INET, &(arp->dst_ip), (char *)(tmp), INET_ADDRSTRLEN), ether_ntoa((ether_addr*)arp->dst_mac));
+        fprintf(outfile, "\n%02d:%02d:%02d.%06ld ", hours, minutes, seconds, microseconds);
+
+        // formát je src_IP(src_MAC) >  dst_IP(dst_MAC)
+        fprintf(outfile , "%s(%s) > ", inet_ntop(AF_INET, &(arp->src_ip), (char *)(tmp), INET_ADDRSTRLEN), ether_ntoa((ether_addr*)arp->src_mac));
+        fprintf(outfile , "%s(%s)\n", inet_ntop(AF_INET, &(arp->dst_ip), (char *)(tmp), INET_ADDRSTRLEN), ether_ntoa((ether_addr*)arp->dst_mac));
         return;
     }
 
-    //získání a zpracování "časové stopy" paketu
-    tm * time = localtime(&(frame->ts.tv_sec));
-    int hours = time->tm_hour;
-    int minutes = time->tm_min;
-    int seconds = time->tm_sec;
-    long int microseconds = frame->ts.tv_usec;
-
-    fprintf(logfile, "\n%02d:%02d:%02d.%06ld ", hours, minutes, seconds, microseconds);
-    fprintf(logfile , "%s : %d > ", src_name_print, source_port);
-    fprintf(logfile , "%s : %d\n", dest_name_print, dest_port);
+    fprintf(outfile, "\n%02d:%02d:%02d.%06ld ", hours, minutes, seconds, microseconds);
+    fprintf(outfile , "%s : %d > ", src_name_print, source_port);
+    fprintf(outfile , "%s : %d\n", dest_name_print, dest_port);
 }
 
 /**
@@ -418,7 +413,7 @@ void print_tcp_packet(unsigned char * packet, const struct pcap_pkthdr * frame, 
         iphXhdrlen = (unsigned short) iph->ihl * 4;
         //IP hlavička musí mít 20-60 bajtů
         if (iphXhdrlen < 20 or iphXhdrlen > 60) {
-            fprintf(error_logfile,"\n   Neplatná délka IPv4 hlavičky, délka = %u bajtů\n", iphXhdrlen);
+            fprintf(error_outfile,"\n   Neplatná délka IPv4 hlavičky, délka = %u bajtů\n", iphXhdrlen);
             exit(PACKET_ERROR);
         }
     }
@@ -436,11 +431,11 @@ void print_tcp_packet(unsigned char * packet, const struct pcap_pkthdr * frame, 
 
     print_packet_preamble(packet, frame, ip_version, ntohs(tcph->dest), ntohs(tcph->source));
 
-    fprintf(logfile , "\n");
+    fprintf(outfile , "\n");
     print_data(packet, header_size);
-    fprintf(logfile , "\n");
+    fprintf(outfile , "\n");
     print_data(packet + header_size, size - header_size);
-    fprintf(logfile , "\n");
+    fprintf(outfile , "\n");
 }
 
 /**
@@ -461,7 +456,7 @@ void print_udp_packet(unsigned char * packet, const struct pcap_pkthdr * frame, 
         iphXhdrlen = (unsigned short) iph->ihl * 4;
         //IP hlavička musí mít 20-60 bajtů
         if (iphXhdrlen < 20 or iphXhdrlen > 60) {
-            fprintf(error_logfile,"\n   Neplatná délka IPv4 hlavičky, délka = %u bajtů\n", iphXhdrlen);
+            fprintf(error_outfile,"\n   Neplatná délka IPv4 hlavičky, délka = %u bajtů\n", iphXhdrlen);
             exit(PACKET_ERROR);
         }
     }
@@ -475,11 +470,11 @@ void print_udp_packet(unsigned char * packet, const struct pcap_pkthdr * frame, 
     int header_size = ethhdrlen + iphXhdrlen + udphdrlen;
 
     print_packet_preamble(packet, frame, ip_version, ntohs(udph->dest), ntohs(udph->source));
-    fprintf(logfile , "\n");
+    fprintf(outfile , "\n");
     print_data(packet, header_size);
-    fprintf(logfile , "\n");
+    fprintf(outfile , "\n");
     print_data(packet + header_size, size - header_size);
-    fprintf(logfile , "\n");
+    fprintf(outfile , "\n");
 }
 /**
  * @brief Funkce tiskne ethernetovou a ARP hlavičku, pak jeden prázdný řádek a následně samotná data.
@@ -495,11 +490,11 @@ void print_arp_packet(unsigned char *packet, const struct pcap_pkthdr *frame, in
     int header_size = ethhdrlen + arphdrlen;
 
     print_packet_preamble(packet, frame, AF_UNSPEC);
-    fprintf(logfile , "\n");
+    fprintf(outfile , "\n");
     print_data(packet, header_size);
-    fprintf(logfile , "\n");
+    fprintf(outfile , "\n");
     print_data(packet + header_size, size - header_size);
-    fprintf(logfile , "\n");
+    fprintf(outfile , "\n");
 }
 
 /**
@@ -507,7 +502,7 @@ void print_arp_packet(unsigned char *packet, const struct pcap_pkthdr *frame, in
  * @param size číslo, které se má vytisknout
  */
 void print_bytes(int size){
-    fprintf(logfile, "0x%04x", size);
+    fprintf(outfile, "0x%04x", size);
 }
 
 /**
@@ -521,28 +516,28 @@ void print_data(unsigned char *data, int size)
     for(i = 0 ; i < size ; i++)
     {
         if (i != 0 and i % 8 == 0 and i % 16 != 0)//po 8 bajtech mezera navíc
-            fprintf(logfile, " ");
+            fprintf(outfile, " ");
 
         if(i != 0 and i % 16 == 0){
-            fprintf(logfile , "   ");
+            fprintf(outfile , "   ");
             for(j = i - 16; j < i; j++){
                 if (j != 0 and j % 8 == 0 and j % 16 != 0)//mezera navíc ve výpisu hodnot
-                    fprintf(logfile, " ");
+                    fprintf(outfile, " ");
                 if(data[j] >= 32 and data[j] <= 127)
-                    fprintf(logfile , "%c",(unsigned char)data[j]);
+                    fprintf(outfile , "%c", (unsigned char)data[j]);
                 else
-                    fprintf(logfile , ".");
+                    fprintf(outfile , ".");
             }
-            fprintf(logfile , "\n");
+            fprintf(outfile , "\n");
         }
 
         if(i % 16 == 0){
             print_bytes(bytes_read); //počet doposud vytisnutych bajtu napr. 0x0010
             bytes_read += 0x10;
-            fprintf(logfile , "  ");
+            fprintf(outfile , "  ");
         }
 
-        fprintf(logfile , " %02X",(unsigned int)data[i]);
+        fprintf(outfile , " %02X", (unsigned int)data[i]);
 
         //speciální postup pro poslední řadek dat, musí se vyplnit prázdný prostor
         if(i == size - 1){
@@ -550,27 +545,27 @@ void print_data(unsigned char *data, int size)
             k = 0;
             for(j = 0; j < 15 - i % 16; j++){
                 if (i != 0 and i % 8 == 0 and i % 16 != 0)//mezera navíc ve výpisu hodnot
-                    fprintf(logfile, " ");
-                fprintf(logfile , "   ");
+                    fprintf(outfile, " ");
+                fprintf(outfile , "   ");
                 k++;
             }
             //na posledním řádku se nevytiskla prostřední mezera, je potřeba ji dotisknout
             if (k >= 8)
-                fprintf(logfile, " ");
+                fprintf(outfile, " ");
 
             //mezera mezi hexa a tisknutelnými znaky
-            fprintf(logfile , "   ");
+            fprintf(outfile , "   ");
 
             //tisknutelne znaky, jinak tecka
             for(j = i - i % 16; j <= i; j++){
                 if (j != 0 and j % 8 == 0 and j % 16 != 0)//mezera navíc ve výpisu hodnot
-                    fprintf(logfile, " ");
+                    fprintf(outfile, " ");
                 if(data[j] >= 32 and data[j] <= 127)
-                    fprintf(logfile , "%c",(unsigned char)data[j]);
+                    fprintf(outfile , "%c", (unsigned char)data[j]);
                 else
-                    fprintf(logfile , ".");
+                    fprintf(outfile , ".");
             }
-            fprintf(logfile ,  "\n" );
+            fprintf(outfile , "\n" );
         }
     }
     if (i % 16 != 0)

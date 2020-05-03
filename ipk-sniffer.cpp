@@ -30,7 +30,8 @@ struct sockaddr_in sock_source_4;
 struct sockaddr_in6 sock_source_6;
 int tcp_count = 0, udp_count = 0, arp_count = 0, total = 0, others = 0;
 char * interface_arg;
-int interface_flag = 0, tcp_flag = 0, udp_flag = 0, arp_flag = 0, ip6_flag = 0, ip4_flag = 0, all_flag = 0, port_flag = 0, port_arg = 0, num_arg = 1, bytes_read = 0;
+int interface_flag = 0, tcp_flag = 0, udp_flag = 0, arp_flag = 0, ip6_flag = 0, ip4_flag = 0, all_flag = 0,
+stats_flag = 0, port_flag = 0, port_arg = 0, num_arg = 1, bytes_read = 0;
 FILE * outfile = stdout;
 FILE * error_outfile = stderr;
 
@@ -44,17 +45,18 @@ struct option long_options[] =
                 {"ip6",  no_argument,        0, '6'},
                 {"ip4",  no_argument,        0, '4'},
                 {"all",  no_argument,        0, 'A'},
+                {"stats",  no_argument,        0, 's'},
                 {"num",  optional_argument,  0, 'n'},
                 {"port", optional_argument,  0, 'p'},
                 {0, 0, 0, 0}  // ukoncovaci prvek
         };
 //definice krátkých přepínačů
-char *short_options = (char*)"htua64An:p:i:";
+char *short_options = (char*)"htua64Asn:p:i:";
 /**
  * @brief Funkce slouží jako koncová procedura při zachycení signálu SIGINT
  * @param unused povinně přítomný argument, není dále využit
  */
-void signal_callback_handler(int unused) {
+void signal_callback_handler(int unused){
     unused = unused; //obelstění překladače a jeho varování na nevyužitou proměnnou
     fprintf(outfile, "\n\n   Byl zaslán signál SIGINT, program se ukočuje.\n\n");
     exit(OK);
@@ -110,8 +112,13 @@ void callback(u_char * args, const struct pcap_pkthdr * header, const u_char * p
         others++;
 }
 
+/**
+ * @brief Hlavní funkce, zpracovávají se zde argumenty a připojuje se zde na rozhraní a aplikují se na něj filtry.
+ * Části týkající se manipulace s rozhraním jsou inspirovány z odkazované literatury.
+ * Konkrétně na webu https://www.tcpdump.org/pcap.html
+ */
 int main(int argc, char * argv[]) {
-    signal(SIGINT, signal_callback_handler);  // zacycení SIGINT v průběhu vykonávání programu
+    signal(SIGINT, signal_callback_handler);  // zachycení SIGINT v průběhu vykonávání programu
 
     pcap_t * handle;
     char * dev;
@@ -205,6 +212,13 @@ int main(int argc, char * argv[]) {
                     }
                     all_flag = 1;
                     break;
+                case 's':
+                    if (p_tmp->status == S2I_OK){
+                        fprintf(error_outfile, "\n%s   Parametr -s | --stats nepřijímá žádné argumenty.%s\n\n", RED, RST);
+                        exit(BAD_ARG_VALUE);
+                    }
+                    stats_flag = 1;
+                    break;
                 default:
                     exit(UNKNOWN_PARAMETER);
             }
@@ -266,7 +280,7 @@ int main(int argc, char * argv[]) {
         fprintf(error_outfile, "\n%s   Rozhraní \"%s\" se nepodařilo otevřít.%s\n\n", RED, dev, RST);
         exit(INTERFACE_ERROR);
     }
-
+    // syntaxe filterů https://linux.die.net/man/7/pcap-filter
     if (ip4_flag and ip6_flag)
         sprintf(filter_exp, "(ether proto \\ip or ether proto \\ip6) and ");
     else if (ip4_flag)
@@ -275,7 +289,7 @@ int main(int argc, char * argv[]) {
         sprintf(filter_exp, "ether proto \\ip6 and ");
 
     if (all_flag)
-    {}  // žádný filtr, zachytává se vše
+        sprintf(filter_exp, " ");  // žádný filtr, zachytává se vše
     else if (arp_flag)
         sprintf(filter_exp, "ether proto \\arp");
     else{
@@ -298,7 +312,6 @@ int main(int argc, char * argv[]) {
     }
 
 
-    //printf("%s", filter_exp); //todo debug
     if (pcap_compile(handle, &fp, filter_exp, 0, net) == -1) {
         fprintf(error_outfile, "\n   Nepodařilo se přeložit filtr \"%s\" na rozhraní \"%s\".\n\n", filter_exp, dev);
         exit(INTERFACE_ERROR);
@@ -317,8 +330,15 @@ int main(int argc, char * argv[]) {
     // cyklus dokud počet přijatých paketu není roven num_arg
     pcap_loop(handle, num_arg, callback, nullptr);  // https://linux.die.net/man/3/pcap_loop
     pcap_close(handle);
-    if (all_flag)
-        fprintf(outfile, "\nPočet nepodporovaných paketů: %d.\n", others);
+    if (stats_flag){
+        total = tcp_count + udp_count + arp_count + others;
+        fprintf(outfile,
+                "\n  Celkový počet: ...%d\n"
+                         "  TCP: .............%d\n"
+                         "  UDP: .............%d\n"
+                         "  ARP: .............%d\n"
+                         "  Nepodporované: ...%d\n", total, tcp_count, udp_count, arp_count,others);
+    }
     return OK;
 }
 

@@ -43,7 +43,7 @@ int dns_cache_get(u_int32_t address, char * buffer) {
             return 0;
         }
     }
-
+    // Funkce getnameinfo http://man7.org/linux/man-pages/man3/getnameinfo.3.html
     int rc_s = getnameinfo((struct sockaddr *) &sa_in, sizeof(sa_in), name, sizeof(name), nullptr, 0, 0);
     if (rc_s != 0)
         hostname = inet_ntoa(sa_in.sin_addr);
